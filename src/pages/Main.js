@@ -1,16 +1,55 @@
-import { Address } from "everscale-inpage-provider"
+import { Address, ProviderRpcClient  } from "everscale-inpage-provider"
 import React, { useEffect, useState } from "react"
-
+import { EverscaleStandaloneClient,EverWalletAccount, SimpleKeystore } from "everscale-standalone-client"
+// import {EverWalletAccount} from "@eversdk/core";
 import BackImg from "../styles/img/decor.svg"
 import LogOutImg from "../styles/img/log_out.svg"
 
 // Importing of our contract ABI from smart-contract build action. Of cource we need ABI for contracts calls.
-import tokenRootAbi from "../abi/TokenRoot.abi.json"
-import tokenWalletAbi from "../abi/TokenWallet.abi.json"
+// import tokenRootAbi from "../abi/TokenRoot.abi.json"
+// import tokenWalletAbi from "../abi/TokenWallet.abi.json"
 
 import ConnectWallet from "../components/ConnectWallet"
+import Transfer from "../components/Transfer"
+import { abi, IR_CONTRACT_ADDRESS } from "../constants";
+let keyPair = {
+  publicKey: "0eabed4ad0687ede4d103dda14cc582238237362c2d363e28e73c914181d2c7a",
+  secretKey: "1552f761f617b7a2cec21ca6bc654fbf2632f9f6cc3ac4c27bbaf8455d8f8239"
+}
+
+let eas = await EverWalletAccount.fromPubkey({publicKey:"0eabed4ad0687ede4d103dda14cc582238237362c2d363e28e73c914181d2c7a"})
+let easAddress = "0:a3457cb4910926ebbd181a16077951c54ba2bbbe1769da02ff5b5830182de9c5"
+
+eas["getAccount"] = (address) => {
+  return eas
+}
 
 
+let sks = new SimpleKeystore()
+sks.addKeyPair(keyPair.publicKey, keyPair)
+
+const ever = new ProviderRpcClient({
+  fallback: () =>
+      EverscaleStandaloneClient.create({
+          connection: {
+              id: 1, // network id
+              type: 'graphql',
+              data: {
+                  endpoints: ['gql-testnet.venom.foundation'],
+              },
+          },
+          keystore: sks,
+          accountsStorage: eas,
+
+      }),
+});
+
+
+await ever.ensureInitialized();
+
+await ever.requestPermissions({
+  permissions: ['basic'],
+});
 function Main({ venomConnect }) {
   const [venomProvider, setVenomProvider] = useState()
   const [address, setAddress] = useState()
@@ -23,72 +62,6 @@ function Main({ venomConnect }) {
   const getAddress = async provider => {
     const providerState = await provider?.getProviderState?.()
     return providerState?.permissions.accountInteraction?.address.toString()
-  }
-
-  // This function will call walletOf function of TokenRoot contract, to obtain TokenWallet of connecte4d user.
-  const setupTokenWalletAddress = async (standalone, wallet) => {
-    try {
-      const contractAddress = new Address(
-        "0:91470b9a77ada682c9f9aee5ae0a4e2ea549ee51f7b0f2cba5182ffec2eb233f"
-      ) // Our TokenRoot address in venom testnet
-      // We will use standalone-client form our venomConnect instance to call a view method of contract
-      const contract = new standalone.Contract(tokenRootAbi, contractAddress) // creating a contract instance with contract address and interface (ABI)
-      // Smart-contract calling. Function walletOf of TokenRoot will calculate user's tokenWallet address by it's VenomWallet address (wich was connected)
-      const tokenWallet = await contract.methods
-        .walletOf({
-          answerId: 0,
-          walletOwner: wallet
-        })
-        .call()
-      if (!tokenWallet) return undefined
-      tokenWalletAddress = tokenWallet.value0._address
-      return tokenWalletAddress
-    } catch (e) {
-      console.error(e)
-    }
-    return undefined
-  }
-
-  // Same idea for token balance fetching. Usage of standalone client and balance method of TIP-3 TokenWallet
-  // We already knows user's TokenWallet address
-  const getBalance = async wallet => {
-    if (!venomConnect) return
-    const standalone = await venomConnect?.getStandalone("venomwallet")
-    if (standalone) {
-      if (!tokenWalletAddress) {
-        await setupTokenWalletAddress(standalone, wallet)
-      }
-      if (!venomProvider || !tokenWalletAddress) return
-      try {
-        const contractAddress = new Address(tokenWalletAddress)
-        const contract = new standalone.Contract(
-          tokenWalletAbi,
-          contractAddress
-        )
-        // We check a contract state here to acknowledge if TokenWallet already deployed
-        // As you remember, wallet can be deployed with first transfer on it.
-        // If our wallet isn't deployed, so it's balance is 0 :)
-        const contractState = await venomProvider.rawApi.getFullContractState({
-          address: tokenWalletAddress
-        })
-        if (contractState.state) {
-          // But if this deployed, just call a balance function
-          const result = await contract.methods
-            .balance({
-              answerId: 0
-            })
-            .call()
-          const tokenBalance = result.value0 // It will be with decimals. Format if you want by dividing with 10**decimals
-          setBalance(tokenBalance)
-        } else {
-          setBalance("0")
-        }
-      } catch (e) {
-        console.error(e)
-      }
-    } else {
-      alert("Standalone is not available now")
-    }
   }
 
   // Any interaction with venom-wallet (address fetching is included) needs to be authentificated
@@ -109,8 +82,6 @@ function Main({ venomConnect }) {
   const onDisconnect = async () => {
     venomProvider?.disconnect()
     setAddress(undefined)
-    setBalance(undefined)
-    tokenWalletAddress = undefined
   }
 
   // When our provider is ready, we need to get address and balance from.
@@ -131,10 +102,22 @@ function Main({ venomConnect }) {
     }
   }, [venomConnect])
 
-  // Hook for balance setup
-  useEffect(() => {
-    if (address) getBalance(address)
-  }, [address])
+  const callthis = async ()=>{
+    const contr = new ever.Contract(abi, IR_CONTRACT_ADDRESS);
+    await contr.methods.transfer({
+      amount: 1 * 18,
+      recipient: new Address("0:344e58679c5a91513a7ec1dc590c77db1f7becddf818fde42d4dd907ede056bc"),
+      deployWalletValue: 0,
+      remainingGasTo: new Address("0:a3457cb4910926ebbd181a16077951c54ba2bbbe1769da02ff5b5830182de9c5"),
+      notify: false,
+      payload: ''
+    }).send({
+      from: new Address("0:a3457cb4910926ebbd181a16077951c54ba2bbbe1769da02ff5b5830182de9c5"), 
+      recipient: new Address("0:344e58679c5a91513a7ec1dc590c77db1f7becddf818fde42d4dd907ede056bc"),
+      amount: '1000000000'
+    });
+
+  }
 
   return (
     <div className="box">
@@ -150,9 +133,11 @@ function Main({ venomConnect }) {
       <img className="decor" src={BackImg} alt="back" />
       <div className="card">
         <div className="card__wrap">
-          {address ? <h1>Hello World </h1>
+          {address ?<Transfer callthis={callthis}/>
            : (
+            <>
             <ConnectWallet venomConnect={venomConnect} />
+            </>
           )}
         </div>
       </div>
